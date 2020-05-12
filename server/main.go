@@ -134,7 +134,7 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	var config = webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
-				URLs: []string{"stun:192.168.1.12:3478"},
+				URLs: []string{"stun:222.73.105.251:3478"},
 			},
 		},
 	}
