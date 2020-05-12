@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8"/>
+	<title>sfu</title>
+
+	<style type="text/css">
+		.comments {
+			width: 100%; /*auto width*/
+			overflow: auto;
+			word-break: break-all;
+		}
+	</style>
+</head>
+
+<body>
+<video id="video1" width="320" height="240" autoplay muted controls></video>
+<br/>
+<video id="video2" width="320" height="240" autoplay muted controls></video>
+<br/>
+<input id="msginput" type="text" style="width: 320px;height: 24px; display: none;" placeholder="typing here..." onkeydown="sendMessage(this)"><br/>
+
+<button class="sessbtn" onclick="window.createSession(true)">Publish</button>
+<button class="sessbtn" onclick="window.createSession(false)">Subscribe</button>
+
+<div id="signalingContainer" style="display: none">
+	Client SDP<textarea class="comments" id="localSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
+	Server SDP<textarea class="comments" id="remoteSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
+	<!-- <button onclick="window.startSession()"> Start Session </button> -->
+</div>
+
+<div id="logs"></div>
+<script>
+  var log = msg => {
+    document.getElementById('logs').innerHTML += msg + '<br>'
+  }
+
+  var sock = null;
+  var wsuri = "ws://" + location.host + "/ws";
+  var dataChannel = null;
+  window.onload = function () {
+    sock = new WebSocket(wsuri);
+    sock.onopen = function () {
+      console.log("websocket connected to " + wsuri);
+    }
+
+    sock.onclose = function (e) {
+      console.log("websocket connection closed (" + e.code + ")");
+    }
+
+    sock.onmessage = function (e) {
+      var data = JSON.parse(e.data)
+      document.getElementById('remoteSDP').value = data.join_room_rsp.session_description.sdp
+      window.startSession()
+    }
+
+    sock.onerror = function (e) {
+    }
+  };
+
+  window.sendMessage = function (element) {
+    if (event.key === 'Enter') {
+      let message = element.value
+      if (dataChannel === null) {
+        return;
+      }
+      if (message === '') {
+        return alert('Message must not be empty')
+      }
+      dataChannel.send(message)
+      element.value = ''
+    }
+  }
+
+  window.createSession = function (isPublisher) {
+    let pc = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: 'stun:stun.l.google.com:19302'
+        }
+      ]
+    });
+
+    var sendChannel = pc.createDataChannel('foo', {
+      reliable: false
+    });
+
+    sendChannel.onclose = function () {
+      console.log('sendChannel has closed');
+    };
+
+    sendChannel.onopen = function () {
+      console.log('sendChannel has opened');
+      sendChannel.send("ssssss");
+    };
+    sendChannel.onerror = function (e) {
+      console.log('sendChannel error');
+    };
+    sendChannel.onmessage = function (e) {
+      log(`Message from DataChannel '${sendChannel.label}' payload '${e.data}'`);
+    };
+
+    pc.addTransceiver('audio', {'direction': 'recvonly'})
+    pc.addTransceiver('video', {'direction': 'recvonly'})
+
+    pc.oniceconnectionstatechange = function (e) {
+      log(pc.iceConnectionState)
+    }
+
+    pc.onicecandidate = function (event) {
+      if (event.candidate === null) {
+        var join = {
+          type: 1,
+          join_room_req: {
+            room_id: "1",
+            user_id: Math.random().toString(36).substring(2),
+            session_description: pc.localDescription,
+          },
+        };
+        document.getElementById('localSDP').value = pc.localDescription.sdp;
+        sock.send(JSON.stringify(join));
+      }
+    }
+
+    navigator.mediaDevices.getUserMedia({video: true, audio: true})
+      .then(stream => {
+        document.getElementById('video1').srcObject = stream
+
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
+
+
+        pc.createOffer()
+          .then(d => {
+            pc.setLocalDescription(d);
+          })
+          .catch(log);
+      }).catch(log);
+
+    pc.ontrack = function (e) {
+      if (e && e.streams) {
+        console.log('收到对方音频/视频流数据...');
+        var el = document.getElementById('video2');
+        el.srcObject = e.streams[0];
+        console.log("=========");
+        console.log(event.streams);
+      }
+    }
+
+
+    window.startSession = function () {
+      let sd = document.getElementById('remoteSDP').value;
+      if (sd === '') {
+        return alert('Session Description must not be empty');
+      }
+
+      try {
+        pc.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: sd}));
+      } catch (e) {
+        alert(e);
+      }
+    }
+
+    let btns = document.getElementsByClassName('sessbtn');
+    for (let i = 0; i < btns.length; i++) {
+      btns[i].style = 'display: none';
+    }
+
+    document.getElementById('signalingContainer').style = 'display: block';
+  }
+</script>
+
+</body>
+
+</html>
