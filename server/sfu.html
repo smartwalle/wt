@@ -26,7 +26,6 @@
 <div id="signalingContainer" style="display: none">
 	Client SDP<textarea class="comments" id="localSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
 	Server SDP<textarea class="comments" id="remoteSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
-	<!-- <button onclick="window.startSession()"> Start Session </button> -->
 </div>
 
 <div id="logs"></div>
@@ -62,7 +61,7 @@
     let pc = new RTCPeerConnection({
       iceServers: [
         {
-          urls: 'stun:stun.l.google.com:19302'
+          urls: 'stun:192.168.1.12:3478'
         }
       ]
     });
@@ -90,11 +89,9 @@
       .then(stream => {
         document.getElementById('video1').srcObject = stream
 
-        stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
-
-        // stream.getTracks().forEach(track => {
-        //   pc.addTrack(track, stream);
-        // });
+        stream.getAudioTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
 
 
         pc.createOffer()
@@ -107,7 +104,12 @@
     pc.ontrack = function (e) {
       if (e && e.streams) {
         console.log('收到对方音频/视频流数据...');
-        document.getElementById('video2').srcObject = new MediaStream([e.track])
+        var el = document.getElementById('video2');
+        el.srcObject = e.streams[0];
+        console.log("=========");
+        console.log(event.streams);
+
+        // document.getElementById('video2').srcObject = new MediaStream([e.track])
       }
     }
 

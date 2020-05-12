@@ -134,10 +134,9 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	var config = webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
+				URLs: []string{"stun:192.168.1.12:3478"},
 			},
 		},
-		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
 	}
 
 	var peer, err = api.NewPeerConnection(config)
@@ -168,17 +167,11 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	}
 	user.peer.AddTrack(user.audioTrack)
 
-	videoCodecs := m.GetCodecsByKind(webrtc.RTPCodecTypeVideo)
-	fmt.Println(videoCodecs[0].PayloadType)
-
-	if user.videoTrack, err = peer.NewTrack(videoCodecs[0].PayloadType, rand.Uint32(), "video", "pion"); err != nil {
+	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion"); err != nil {
 		fmt.Println(err)
 		return
 	}
 	user.peer.AddTrack(user.videoTrack)
-
-	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
-	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
 		if track.PayloadType() == webrtc.DefaultPayloadTypeVP8 || track.PayloadType() == webrtc.DefaultPayloadTypeVP9 || track.PayloadType() == webrtc.DefaultPayloadTypeH264 {
