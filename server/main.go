@@ -146,9 +146,6 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	}
 	user.peer = peer
 
-	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
-	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
-
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		fmt.Println("OnICEConnectionStateChange", state)
 	})
@@ -164,14 +161,6 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 			this.mu.Unlock()
 		}
 	})
-	peer.OnDataChannel(func(channel *webrtc.DataChannel) {
-		channel.OnOpen(func() {
-			fmt.Println("open data channel")
-		})
-		channel.OnMessage(func(msg webrtc.DataChannelMessage) {
-			fmt.Println(string(msg.Data))
-		})
-	})
 
 	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "pion"); err != nil {
 		fmt.Println(err)
@@ -179,11 +168,17 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	}
 	user.peer.AddTrack(user.audioTrack)
 
-	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion"); err != nil {
+	videoCodecs := m.GetCodecsByKind(webrtc.RTPCodecTypeVideo)
+	fmt.Println(videoCodecs[0].PayloadType)
+
+	if user.videoTrack, err = peer.NewTrack(videoCodecs[0].PayloadType, rand.Uint32(), "video", "pion"); err != nil {
 		fmt.Println(err)
 		return
 	}
 	user.peer.AddTrack(user.videoTrack)
+
+	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
+	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
 		if track.PayloadType() == webrtc.DefaultPayloadTypeVP8 || track.PayloadType() == webrtc.DefaultPayloadTypeVP9 || track.PayloadType() == webrtc.DefaultPayloadTypeH264 {

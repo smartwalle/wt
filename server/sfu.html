@@ -19,7 +19,6 @@
 <br/>
 <video id="video2" width="320" height="240" autoplay muted controls></video>
 <br/>
-<input id="msginput" type="text" style="width: 320px;height: 24px; display: none;" placeholder="typing here..." onkeydown="sendMessage(this)"><br/>
 
 <button class="sessbtn" onclick="window.createSession(true)">Publish</button>
 <button class="sessbtn" onclick="window.createSession(false)">Subscribe</button>
@@ -59,20 +58,6 @@
     }
   };
 
-  window.sendMessage = function (element) {
-    if (event.key === 'Enter') {
-      let message = element.value
-      if (dataChannel === null) {
-        return;
-      }
-      if (message === '') {
-        return alert('Message must not be empty')
-      }
-      dataChannel.send(message)
-      element.value = ''
-    }
-  }
-
   window.createSession = function (isPublisher) {
     let pc = new RTCPeerConnection({
       iceServers: [
@@ -81,28 +66,6 @@
         }
       ]
     });
-
-    var sendChannel = pc.createDataChannel('foo', {
-      reliable: false
-    });
-
-    sendChannel.onclose = function () {
-      console.log('sendChannel has closed');
-    };
-
-    sendChannel.onopen = function () {
-      console.log('sendChannel has opened');
-      sendChannel.send("ssssss");
-    };
-    sendChannel.onerror = function (e) {
-      console.log('sendChannel error');
-    };
-    sendChannel.onmessage = function (e) {
-      log(`Message from DataChannel '${sendChannel.label}' payload '${e.data}'`);
-    };
-
-    pc.addTransceiver('audio', {'direction': 'recvonly'})
-    pc.addTransceiver('video', {'direction': 'recvonly'})
 
     pc.oniceconnectionstatechange = function (e) {
       log(pc.iceConnectionState)
@@ -127,9 +90,11 @@
       .then(stream => {
         document.getElementById('video1').srcObject = stream
 
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
-        });
+        stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
+
+        // stream.getTracks().forEach(track => {
+        //   pc.addTrack(track, stream);
+        // });
 
 
         pc.createOffer()
@@ -142,10 +107,7 @@
     pc.ontrack = function (e) {
       if (e && e.streams) {
         console.log('收到对方音频/视频流数据...');
-        var el = document.getElementById('video2');
-        el.srcObject = e.streams[0];
-        console.log("=========");
-        console.log(event.streams);
+        document.getElementById('video2').srcObject = new MediaStream([e.track])
       }
     }
 
