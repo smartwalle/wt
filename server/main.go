@@ -147,7 +147,7 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	user.peer = peer
 
 	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio)
-	//peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
+	peer.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo)
 
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		fmt.Println("OnICEConnectionStateChange", state)
@@ -172,6 +172,7 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 			fmt.Println(string(msg.Data))
 		})
 	})
+
 	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "pion"); err != nil {
 		fmt.Println(err)
 		return
@@ -270,7 +271,6 @@ func (this *User) WriteAudio(b []byte) (n int, err error) {
 	}
 	return this.audioTrack.Write(b)
 }
-
 
 func saveToDisk(i media.Writer, track *webrtc.Track) {
 	defer func() {
