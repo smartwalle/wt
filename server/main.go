@@ -182,7 +182,6 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	})
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
-		track.SSRC()
 		if track.Kind() == webrtc.RTPCodecTypeVideo {
 			go func() {
 				peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}})
