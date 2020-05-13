@@ -15,13 +15,16 @@
 </head>
 
 <body>
-<video id="video1" width="320" height="240" autoplay muted controls></video>
+<video id="video1" width="320" height="240" autoplay muted controls hidden></video>
 <br/>
-<video id="video2" width="320" height="240" autoplay controls></video>
+<video id="video" width="320" height="240" autoplay controls hidden></video>
+<br/>
+<br/>
+<br/>
+<audio id="audio" width="320" height="240" autoplay controls></audio>
 <br/>
 
 <button class="sessbtn" onclick="window.createSession(true)">Publish</button>
-<button class="sessbtn" onclick="window.createSession(false)">Subscribe</button>
 
 <div id="signalingContainer" style="display: none">
 	Client SDP<textarea class="comments" id="localSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
@@ -88,7 +91,7 @@
     navigator.mediaDevices.getUserMedia({video: true, audio: true})
       .then(stream => {
         document.getElementById('video1').srcObject = stream
-        stream.getTracks().forEach(track => {
+        stream.getAudioTracks().forEach(track => {
           pc.addTrack(track, stream);
         });
 
@@ -102,8 +105,8 @@
     pc.ontrack = function (e) {
       if (e && e.streams) {
         console.log('收到对方音频/视频流数据...');
-        var el = document.getElementById('video2');
         var stream = e.streams[0]
+        var el = document.getElementById(stream.id);
         el.srcObject = stream;
 
         console.log(stream.id);

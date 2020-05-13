@@ -9,6 +9,7 @@ import (
 	"github.com/smartwalle/log4go"
 	"github.com/smartwalle/net4go"
 	"html/template"
+	"io"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -150,13 +151,13 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	}
 	user.peer = peer
 
-	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "pion"); err != nil {
+	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "audio"); err != nil {
 		log4go.Println(err)
 		return
 	}
 	user.peer.AddTrack(user.audioTrack)
 
-	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion"); err != nil {
+	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "video"); err != nil {
 		log4go.Println(err)
 		return
 	}
@@ -241,44 +242,47 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 			//	}
 			//}
 		} else {
+			rtpBuf := make([]byte, 1460)
 			for {
-				rtp, err := track.ReadRTP()
+				i, err := track.Read(rtpBuf)
 				if err != nil {
-					log4go.Println(err)
 					return
 				}
 				for _, user := range this.users {
 					if user.id != userId {
-						if err = user.WriteAudioRTP(rtp); err != nil {
-							log4go.Println(err)
+						if user.audioTrack == nil {
+							continue
+						}
+						_, err = user.WriteAudio(rtpBuf[:i])
+						if err != nil && err != io.ErrClosedPipe {
+							fmt.Println(err)
 							return
 						}
-						//if user.audioTrack == nil {
-						//	continue
-						//}
-						//
-						//rtp.SSRC = user.audioTrack.SSRC()
-						//if err = user.audioTrack.WriteRTP(rtp); err != nil {
-						//	log4go.Println(err)
-						//	return
-						//}
 					}
 				}
 			}
 
-			//rtpBuf := make([]byte, 1400)
 			//for {
-			//	i, err := track.Read(rtpBuf)
+			//	rtp, err := track.ReadRTP()
 			//	if err != nil {
+			//		log4go.Println(err)
 			//		return
 			//	}
 			//	for _, user := range this.users {
 			//		if user.id != userId {
-			//			_, err = user.WriteAudio(rtpBuf[:i])
-			//			if err != nil && err != io.ErrClosedPipe {
-			//				fmt.Println(err)
+			//			if err = user.WriteAudioRTP(rtp); err != nil {
+			//				log4go.Println(err)
 			//				return
 			//			}
+			//			//if user.audioTrack == nil {
+			//			//	continue
+			//			//}
+			//			//
+			//			//rtp.SSRC = user.audioTrack.SSRC()
+			//			//if err = user.audioTrack.WriteRTP(rtp); err != nil {
+			//			//	log4go.Println(err)
+			//			//	return
+			//			//}
 			//		}
 			//	}
 			//}
@@ -338,4 +342,13 @@ func (this *User) WriteAudioRTP(p *rtp.Packet) (err error) {
 	}
 	p.SSRC = this.audioTrack.SSRC()
 	return this.audioTrack.WriteRTP(p)
+}
+
+func (this *User) WriteAudio(b []byte) (int, error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+	if this.audioTrack == nil {
+		return 0, nil
+	}
+	return this.audioTrack.Write(b)
 }
