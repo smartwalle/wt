@@ -88,7 +88,7 @@
       }
     }
 
-    navigator.mediaDevices.getUserMedia({video: true, audio: true})
+    navigator.mediaDevices.getUserMedia({video: false, audio: true})
       .then(stream => {
         document.getElementById('video1').srcObject = stream
         stream.getAudioTracks().forEach(track => {
