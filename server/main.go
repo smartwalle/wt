@@ -180,6 +180,19 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 			this.mu.Unlock()
 		}
 	})
+	peer.OnDataChannel(func(channel *webrtc.DataChannel) {
+		channel.OnMessage(func(msg webrtc.DataChannelMessage) {
+			log4go.Println(string(msg.Data))
+		})
+		channel.OnOpen(func() {
+			log4go.Println("on channel open")
+
+			for {
+				channel.SendText("来自服务器的消息")
+				time.Sleep(time.Second * 5)
+			}
+		})
+	})
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
 		if track.Kind() == webrtc.RTPCodecTypeVideo {

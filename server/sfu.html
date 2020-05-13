@@ -24,7 +24,7 @@
 <audio id="audio" width="320" height="240" autoplay controls></audio>
 <br/>
 
-<button class="sessbtn" onclick="window.createSession(true)">Publish</button>
+<button class="sessbtn" onclick="createSession()">Publish</button>
 
 <div id="signalingContainer" style="display: none">
 	Client SDP<textarea class="comments" id="localSDP" readonly="true" rows=10 cols=30 onpropertychange="this.style.posHeight=this.scrollHeight "></textarea>
@@ -39,7 +39,7 @@
 
   var sock = null;
   var wsuri = "ws://" + location.host + "/ws";
-  var dataChannel = null;
+
   window.onload = function () {
     sock = new WebSocket(wsuri);
     sock.onopen = function () {
@@ -53,14 +53,14 @@
     sock.onmessage = function (e) {
       var data = JSON.parse(e.data)
       document.getElementById('remoteSDP').value = data.join_room_rsp.session_description.sdp
-      window.startSession()
+      window.startSession();
     }
 
     sock.onerror = function (e) {
     }
   };
 
-  window.createSession = function (isPublisher) {
+  function createSession() {
     let pc = new RTCPeerConnection({
       iceServers: [
         {
@@ -88,6 +88,23 @@
       }
     }
 
+    pc.ontrack = function (e) {
+      if (e && e.streams) {
+        console.log('收到对方音频/视频流数据...');
+        var stream = e.streams[0]
+        var el = document.getElementById(stream.id);
+        el.srcObject = stream;
+      }
+    }
+
+    var dc = pc.createDataChannel("dc")
+    dc.onmessage = function (event) {
+      console.log(event.data);
+    }
+    dc.onopen = function (event) {
+      dc.send("来自客户端的消息");
+    }
+
     navigator.mediaDevices.getUserMedia({video: false, audio: true})
       .then(stream => {
         document.getElementById('video1').srcObject = stream
@@ -101,21 +118,6 @@
           })
           .catch(log);
       }).catch(log);
-
-    pc.ontrack = function (e) {
-      if (e && e.streams) {
-        console.log('收到对方音频/视频流数据...');
-        var stream = e.streams[0]
-        var el = document.getElementById(stream.id);
-        el.srcObject = stream;
-
-        console.log(stream.id);
-        console.log("=========");
-        console.log(event.streams);
-
-        // document.getElementById('video2').srcObject = new MediaStream([e.track])
-      }
-    }
 
 
     window.startSession = function () {
