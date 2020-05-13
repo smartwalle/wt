@@ -3,21 +3,39 @@ package main
 import (
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v2"
-	"github.com/pion/webrtc/v2/pkg/media"
+	"github.com/smartwalle/log4go"
 	"github.com/smartwalle/net4go"
 	"html/template"
-	"io"
 	"math/rand"
 	"net/http"
 	"sync"
+	"time"
 	"wt/protocol"
 )
+
+var api *webrtc.API
+
+var config = webrtc.Configuration{
+	ICEServers: []webrtc.ICEServer{
+		{
+			URLs: []string{"stun:222.73.105.251:3478"},
+		},
+	},
+}
 
 func main() {
 	var rm = NewRoomManager()
 	var h = &ConnHandler{rm: rm}
 	var p = &protocol.WSProtocol{}
+
+	var m = webrtc.MediaEngine{}
+	m.RegisterCodec(webrtc.NewRTPOpusCodec(webrtc.DefaultPayloadTypeOpus, 48000))
+	m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
+
+	api = webrtc.NewAPI(webrtc.WithMediaEngine(m))
 
 	serveHTTP(h, p)
 }
@@ -72,7 +90,7 @@ func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool 
 }
 
 func (this *ConnHandler) OnClose(conn net4go.Conn, err error) {
-	fmt.Println("close", err)
+	log4go.Println("close", err)
 }
 
 // RoomManager
@@ -125,35 +143,36 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 	}
 	this.mu.Unlock()
 
-	var m = webrtc.MediaEngine{}
-	m.RegisterCodec(webrtc.NewRTPOpusCodec(webrtc.DefaultPayloadTypeOpus, 48000))
-	m.RegisterCodec(webrtc.NewRTPVP8Codec(webrtc.DefaultPayloadTypeVP8, 90000))
-
-	var api = webrtc.NewAPI(webrtc.WithMediaEngine(m))
-
-	var config = webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{"stun:222.73.105.251:3478"},
-			},
-		},
-	}
-
 	var peer, err = api.NewPeerConnection(config)
 	if err != nil {
+		log4go.Println(err)
 		return
 	}
 	user.peer = peer
 
+	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "pion"); err != nil {
+		log4go.Println(err)
+		return
+	}
+	user.peer.AddTrack(user.audioTrack)
+
+	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion"); err != nil {
+		log4go.Println(err)
+		return
+	}
+	user.peer.AddTrack(user.videoTrack)
+
 	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		fmt.Println("OnICEConnectionStateChange", state)
+		log4go.Println("OnICEConnectionStateChange", state)
 	})
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		fmt.Println("OnConnectionStateChange", state)
+		log4go.Println("OnConnectionStateChange", state)
 
-		if state == webrtc.PeerConnectionStateDisconnected {
-			user.peer.Close()
-			user.peer = nil
+		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
+			if user != nil && user.peer != nil {
+				user.peer.Close()
+				user.peer = nil
+			}
 
 			this.mu.Lock()
 			delete(this.users, user.id)
@@ -161,66 +180,125 @@ func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) 
 		}
 	})
 
-	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "pion"); err != nil {
-		fmt.Println(err)
-		return
-	}
-	user.peer.AddTrack(user.audioTrack)
-
-	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "pion"); err != nil {
-		fmt.Println(err)
-		return
-	}
-	user.peer.AddTrack(user.videoTrack)
-
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
-		if track.PayloadType() == webrtc.DefaultPayloadTypeVP8 || track.PayloadType() == webrtc.DefaultPayloadTypeVP9 || track.PayloadType() == webrtc.DefaultPayloadTypeH264 {
-			rtpBuf := make([]byte, 1400)
-			for {
-				i, err := track.Read(rtpBuf)
-				if err != nil {
-					return
-				}
-				for _, user := range this.users {
-					if user.id != userId {
-						w, err := user.WriteVideo(rtpBuf[:i])
-						fmt.Println("video", w, err)
-						if err != nil && err != io.ErrClosedPipe {
-							fmt.Println(err)
-							return
-						}
+		track.SSRC()
+		if track.Kind() == webrtc.RTPCodecTypeVideo {
+			go func() {
+				peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}})
+				ticker := time.NewTicker(time.Second * 3)
+				defer ticker.Stop()
+				for range ticker.C {
+					if err := peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}}); err != nil {
+						log4go.Println(err)
+						return
 					}
 				}
+			}()
+
+			for {
+				rtp, err := track.ReadRTP()
+				if err != nil {
+					log4go.Println(err)
+					return
+				}
+
+				for _, user := range this.users {
+					if user.id != userId {
+						//if user.videoTrack == nil {
+						//	continue
+						//}
+
+						if err = user.WriteVideoRTP(rtp); err != nil {
+							log4go.Println(err)
+							return
+						}
+
+						//rtp.SSRC = user.videoTrack.SSRC()
+						//if err := user.videoTrack.WriteRTP(rtp); err != nil {
+						//	log4go.Println(err)
+						//	return
+						//}
+					}
+
+				}
 			}
+
+			//rtpBuf := make([]byte, 1400)
+			//for {
+			//	i, err := track.Read(rtpBuf)
+			//	if err != nil {
+			//		return
+			//	}
+			//	for _, user := range this.users {
+			//		if user.id != userId {
+			//			w, err := user.WriteVideo(rtpBuf[:i])
+			//			fmt.Println("video", w, err)
+			//			if err != nil && err != io.ErrClosedPipe {
+			//				fmt.Println(err)
+			//				return
+			//			}
+			//		}
+			//	}
+			//}
 		} else {
-			rtpBuf := make([]byte, 1400)
 			for {
-				i, err := track.Read(rtpBuf)
+				rtp, err := track.ReadRTP()
 				if err != nil {
+					log4go.Println(err)
 					return
 				}
 				for _, user := range this.users {
 					if user.id != userId {
-						w, err := user.WriteAudio(rtpBuf[:i])
-						fmt.Println("audio", w, err)
-						if err != nil && err != io.ErrClosedPipe {
-							fmt.Println(err)
+						if err = user.WriteAudioRTP(rtp); err != nil {
+							log4go.Println(err)
 							return
 						}
+						//if user.audioTrack == nil {
+						//	continue
+						//}
+						//
+						//rtp.SSRC = user.audioTrack.SSRC()
+						//if err = user.audioTrack.WriteRTP(rtp); err != nil {
+						//	log4go.Println(err)
+						//	return
+						//}
 					}
 				}
 			}
+
+			//rtpBuf := make([]byte, 1400)
+			//for {
+			//	i, err := track.Read(rtpBuf)
+			//	if err != nil {
+			//		return
+			//	}
+			//	for _, user := range this.users {
+			//		if user.id != userId {
+			//			_, err = user.WriteAudio(rtpBuf[:i])
+			//			if err != nil && err != io.ErrClosedPipe {
+			//				fmt.Println(err)
+			//				return
+			//			}
+			//		}
+			//	}
+			//}
 		}
 	})
 
-	peer.SetRemoteDescription(*remoteSession)
+	if err = peer.SetRemoteDescription(*remoteSession); err != nil {
+		log4go.Println(err)
+		return
+	}
 
 	answer, err := peer.CreateAnswer(nil)
 	if err != nil {
-		fmt.Println(err)
+		log4go.Println(err)
 		return
 	}
-	peer.SetLocalDescription(answer)
+	if err = peer.SetLocalDescription(answer); err != nil {
+		log4go.Println(err)
+		return
+	}
 
 	localSession = &answer
 
@@ -242,39 +320,22 @@ func NewUse(userId string) *User {
 	return u
 }
 
-func (this *User) WriteVideo(b []byte) (n int, err error) {
+func (this *User) WriteVideoRTP(p *rtp.Packet) error {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	if this.videoTrack == nil {
-		return 0, nil
+		return nil
 	}
-	return this.videoTrack.Write(b)
+	p.SSRC = this.videoTrack.SSRC()
+	return this.videoTrack.WriteRTP(p)
 }
 
-func (this *User) WriteAudio(b []byte) (n int, err error) {
+func (this *User) WriteAudioRTP(p *rtp.Packet) (err error) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	if this.audioTrack == nil {
-		return 0, nil
+		return nil
 	}
-	return this.audioTrack.Write(b)
-}
-
-func saveToDisk(i media.Writer, track *webrtc.Track) {
-	defer func() {
-		if err := i.Close(); err != nil {
-			panic(err)
-		}
-	}()
-
-	for {
-		packet, err := track.ReadRTP()
-		if err != nil {
-			panic(err)
-		}
-
-		if err := i.WriteRTP(packet); err != nil {
-			panic(err)
-		}
-	}
+	p.SSRC = this.audioTrack.SSRC()
+	return this.audioTrack.WriteRTP(p)
 }

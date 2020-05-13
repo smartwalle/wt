@@ -88,11 +88,9 @@
     navigator.mediaDevices.getUserMedia({video: true, audio: true})
       .then(stream => {
         document.getElementById('video1').srcObject = stream
-
-        stream.getAudioTracks().forEach(track => {
+        stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
         });
-
 
         pc.createOffer()
           .then(d => {
@@ -105,7 +103,10 @@
       if (e && e.streams) {
         console.log('收到对方音频/视频流数据...');
         var el = document.getElementById('video2');
-        el.srcObject = e.streams[0];
+        var stream = e.streams[0]
+        el.srcObject = stream;
+
+        console.log(stream.id);
         console.log("=========");
         console.log(event.streams);
 
@@ -134,6 +135,7 @@
 
     document.getElementById('signalingContainer').style = 'display: block';
   }
+
 </script>
 
 </body>
