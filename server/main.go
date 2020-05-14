@@ -78,6 +78,9 @@ func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool 
 	case protocol.PTPubReq:
 		var pubReq = nPacket.PubReq
 
+		conn.Set("room_id", pubReq.RoomId)
+		conn.Set("user_id", pubReq.UserId)
+
 		var room = this.rm.GetRoom(pubReq.RoomId)
 		var localSession = room.Pub(pubReq.UserId, conn, pubReq.SessionDescription)
 
@@ -119,6 +122,30 @@ func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool 
 
 func (this *ConnHandler) OnClose(conn net4go.Conn, err error) {
 	log4go.Println("close", err)
+
+	var rValue = conn.Get("room_id")
+	if rValue != nil {
+		var roomId = rValue.(string)
+		var room = this.rm.GetRoom(roomId)
+
+		if room != nil {
+			var uValue = conn.Get("user_id")
+			if uValue != nil {
+
+				room.mu.Lock()
+				defer room.mu.Unlock()
+
+				var userId = uValue.(string)
+				delete(room.conns, userId)
+
+				var router = room.routers[userId]
+				if router != nil {
+					router.Close()
+				}
+				delete(room.routers, userId)
+			}
+		}
+	}
 }
 
 // RoomManager
@@ -187,7 +214,11 @@ func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.Ses
 
 	var router = this.routers[userId]
 	if router != nil {
-		return nil
+		localSession, err := router.Publish(remoteSession)
+		if err != nil {
+			return nil
+		}
+		return localSession
 	}
 
 	router, err := sfu.NewRouter(userId, api, config, remoteSession)
