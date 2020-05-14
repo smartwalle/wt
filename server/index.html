@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Title</title>
+
+	<style type="text/css">
+		.comments {
+			width: 100%; /*auto width*/
+			overflow: auto;
+			word-break: break-all;
+		}
+	</style>
+</head>
+<body>
+<div id="videos">
+</div>
+<button class="publish" onclick="prePublish()">Publish</button>
+<script>
+  var userId = Math.random().toString(36).substring(2);
+  var roomId = "1";
+  var socket = null;
+  var wsURI = location.protocol.replace("http", "ws") + "//" + location.host + "/ws";
+
+  console.log(userId);
+
+  var iceServers = [
+    {
+      urls: "stun:222.73.105.251:3478"
+    }
+  ];
+  var pub = null;
+
+  var subs = [];
+
+  const PTPubReq = 1;
+  const PTPubRsp = 2;
+
+  const PTSubReq = 3;
+  const PTSubRsp = 4;
+
+  const PTNewPubNotify = 5;
+
+
+  window.onload = function () {
+    socket = new WebSocket(wsURI);
+    socket.onopen = function () {
+      console.log("websocket connected to " + wsURI)
+    }
+
+    socket.onclose = function (e) {
+      console.log("websocket connection closed (" + e.code + ")");
+    }
+
+    socket.onmessage = function (e) {
+      var data = JSON.parse(e.data)
+
+      switch (data.type) {
+        case PTPubRsp: {
+          if (data.pub_rsp.session_description != null) {
+            startPublish(data.pub_rsp.session_description.sdp);
+          }
+          break;
+        }
+        case PTSubRsp: {
+          if (data.sub_rsp.session_description != null) {
+            startSubscribe(data.sub_rsp.to_user_id, data.sub_rsp.session_description.sdp)
+          }
+          break;
+        }
+        case PTNewPubNotify: {
+          if (data.new_pub_notify != null) {
+            data.new_pub_notify.user_id.forEach(function (id) {
+              if (id != userId) {
+                preSubscribe(id);
+              }
+            })
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  function prePublish() {
+    pub = new RTCPeerConnection({
+      iceServers: iceServers
+    });
+
+    pub.oniceconnectionstatechange = function (e) {
+      console.log(pub.iceConnectionState);
+    }
+    pub.onicecandidate = function (e) {
+      if (e.candidate === null) {
+        var pubReq = {
+          type: PTPubReq,
+          pub_req: {
+            room_id: roomId,
+            user_id: userId,
+            session_description: pub.localDescription,
+          },
+        };
+        socket.send(JSON.stringify(pubReq));
+      }
+    }
+
+    navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(function (stream) {
+      stream.getTracks().forEach(function (track) {
+          pub.addTrack(track);
+        }
+      );
+
+      pub.createOffer().then(function (d) {
+        pub.setLocalDescription(d);
+      });
+    })
+  }
+
+  function startPublish(sdp) {
+    pub.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: sdp}))
+  }
+
+  function preSubscribe(toUserId) {
+    console.log("subscribe", toUserId);
+
+    var cc = subs[toUserId];
+    if (cc != null) {
+      console.log("exists", toUserId);
+      return
+    }
+
+    var sub = new RTCPeerConnection({
+      iceServers: iceServers
+    });
+
+    sub.oniceconnectionstatechange = function (e) {
+      console.log(sub.iceConnectionState);
+    }
+    sub.onicecandidate = function (e) {
+      if (e.candidate === null) {
+        var subReq = {
+          type: PTSubReq,
+          sub_req: {
+            room_id: roomId,
+            user_id: userId,
+            to_user_id: toUserId,
+            session_description: sub.localDescription,
+          },
+        };
+        socket.send(JSON.stringify(subReq));
+      }
+    };
+
+    sub.ontrack = function (e) {
+      var stream = e.streams[0];
+      var video = document.getElementById("video" + toUserId)
+      console.log(stream);
+      console.log(video);
+      if (video === null) {
+        video = document.createElement("video");
+        video.id = "video" + toUserId
+        video.controls = true;
+        video.autoplay = true;
+        video.width = 200;
+        video.height = 150;
+        document.getElementById('videos').appendChild(video);
+      }
+      video.srcObject = stream;
+    };
+
+    sub.addTransceiver('audio');
+    sub.addTransceiver('video');
+
+    sub.createOffer().then(function (d) {
+      sub.setLocalDescription(d);
+    });
+
+    subs[toUserId] = sub;
+  }
+
+  function startSubscribe(toUserId, sdp) {
+    var sub = subs[toUserId];
+    sub.setRemoteDescription(new RTCSessionDescription({type: 'answer', sdp: sdp}));
+  }
+
+</script>
+</body>
+</html>

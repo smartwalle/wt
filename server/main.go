@@ -3,23 +3,19 @@ package main
 import (
 	"fmt"
 	"github.com/gorilla/websocket"
-	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v2"
 	"github.com/smartwalle/log4go"
 	"github.com/smartwalle/net4go"
 	"html/template"
-	"io"
-	"math/rand"
 	"net/http"
 	"sync"
-	"time"
 	"wt/protocol"
+	"wt/sfu"
 )
 
 var api *webrtc.API
 
-var config = webrtc.Configuration{
+var config = &webrtc.Configuration{
 	ICEServers: []webrtc.ICEServer{
 		{
 			URLs: []string{"stun:222.73.105.251:3478"},
@@ -58,6 +54,11 @@ func serveHTTP(h net4go.Handler, p net4go.Protocol) {
 		net4go.NewWsConn(c, p, h, net4go.WithReadLimitSize(0))
 	})
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
+		t, _ := template.ParseFiles("index.html")
+		t.Execute(writer, nil)
+	})
+
+	http.HandleFunc("/sfu", func(writer http.ResponseWriter, request *http.Request) {
 		t, _ := template.ParseFiles("sfu.html")
 		t.Execute(writer, nil)
 	})
@@ -74,17 +75,43 @@ type ConnHandler struct {
 func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool {
 	var nPacket = packet.(*protocol.Packet)
 	switch nPacket.Type {
-	case protocol.PTJoinRoomReq:
-		var joinReq = nPacket.JoinRoomReq
+	case protocol.PTPubReq:
+		var pubReq = nPacket.PubReq
 
-		var room = this.rm.GetRoom(joinReq.RoomId)
-		var remoteSession = room.Join(joinReq.UserId, joinReq.SessionDescription)
+		var room = this.rm.GetRoom(pubReq.RoomId)
+		var localSession = room.Pub(pubReq.UserId, conn, pubReq.SessionDescription)
 
-		var joinRsp = &protocol.JoinRoomRsp{}
-		joinRsp.UserId = joinReq.UserId
-		joinRsp.RoomId = joinReq.RoomId
-		joinRsp.SessionDescription = remoteSession
-		conn.AsyncWritePacket(&protocol.Packet{Type: protocol.PTJoinRoomRsp, JoinRoomRsp: joinRsp}, 0)
+		var pubRsp = &protocol.PubRsp{}
+		pubRsp.UserId = pubReq.UserId
+		pubRsp.RoomId = pubReq.RoomId
+		pubRsp.SessionDescription = localSession
+		conn.AsyncWritePacket(&protocol.Packet{Type: protocol.PTPubRsp, PubRsp: pubRsp}, 0)
+
+		var ids = make([]string, 0, 0)
+		for id, _ := range room.conns {
+			ids = append(ids, id)
+		}
+
+		var pubNotify = &protocol.NewPubNotify{}
+		pubNotify.UserId = ids
+		pubNotify.RoomId = pubReq.RoomId
+
+		for _, c := range room.conns {
+			c.AsyncWritePacket(&protocol.Packet{Type: protocol.PTNewPubNotify, NewPubNotify: pubNotify}, 0)
+		}
+
+	case protocol.PTSubReq:
+		var subReq = nPacket.SubReq
+
+		var room = this.rm.GetRoom(subReq.RoomId)
+		var localSession = room.Sub(subReq.UserId, subReq.ToUserId, conn, subReq.SessionDescription)
+
+		var subRsp = &protocol.SubRsp{}
+		subRsp.RoomId = subReq.RoomId
+		subRsp.UserId = subReq.UserId
+		subRsp.ToUserId = subReq.ToUserId
+		subRsp.SessionDescription = localSession
+		conn.AsyncWritePacket(&protocol.Packet{Type: protocol.PTSubRsp, SubRsp: subRsp}, 0)
 	}
 
 	return true
@@ -110,6 +137,7 @@ func (this *RoomManager) GetRoom(roomId string) *Room {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 	var room = this.rooms[roomId]
+
 	if room == nil {
 		room = NewRoom(roomId)
 		this.rooms[roomId] = room
@@ -119,248 +147,91 @@ func (this *RoomManager) GetRoom(roomId string) *Room {
 
 // Room
 type Room struct {
-	id    string
-	mu    sync.Mutex
-	users map[string]*User
+	id string
+	mu sync.Mutex
+
+	conns   map[string]net4go.Conn
+	routers map[string]*sfu.Router
 }
 
 func NewRoom(id string) *Room {
 	var r = &Room{}
 	r.id = id
-	r.users = make(map[string]*User)
+	r.conns = make(map[string]net4go.Conn)
+	r.routers = make(map[string]*sfu.Router)
 	return r
 }
 
-func (this *Room) Join(userId string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription) {
-	this.mu.Lock()
-	var user = this.users[userId]
-	if user == nil {
-		user = NewUse(userId)
-		this.users[userId] = user
-	} else {
-		if user.peer != nil {
-			user.peer.Close()
-		}
-	}
-	this.mu.Unlock()
-
-	var peer, err = api.NewPeerConnection(config)
-	if err != nil {
-		log4go.Println(err)
-		return
-	}
-	user.peer = peer
-
-	if user.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), "audio", "audio"); err != nil {
-		log4go.Println(err)
-		return
-	}
-	user.peer.AddTrack(user.audioTrack)
-
-	if user.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), "video", "video"); err != nil {
-		log4go.Println(err)
-		return
-	}
-	user.peer.AddTrack(user.videoTrack)
-
-	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log4go.Println("OnICEConnectionStateChange", state)
-	})
-	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log4go.Println("OnConnectionStateChange", state)
-
-		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
-			if user != nil && user.peer != nil {
-				user.peer.Close()
-				user.peer = nil
-			}
-
-			this.mu.Lock()
-			delete(this.users, user.id)
-			this.mu.Unlock()
-		}
-	})
-	peer.OnDataChannel(func(channel *webrtc.DataChannel) {
-		channel.OnMessage(func(msg webrtc.DataChannelMessage) {
-			log4go.Println(string(msg.Data))
-		})
-		channel.OnOpen(func() {
-			log4go.Println("on channel open")
-
-			for {
-				channel.SendText("来自服务器的消息")
-				time.Sleep(time.Second * 5)
-			}
-		})
-	})
-
-	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
-		if track.Kind() == webrtc.RTPCodecTypeVideo {
-			go func() {
-				peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}})
-				ticker := time.NewTicker(time.Second * 3)
-				defer ticker.Stop()
-				for range ticker.C {
-					if err := peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}}); err != nil {
-						log4go.Println(err)
-						return
-					}
-				}
-			}()
-
-			for {
-				rtp, err := track.ReadRTP()
-				if err != nil {
-					log4go.Println(err)
-					return
-				}
-
-				for _, user := range this.users {
-					if user.id != userId {
-						//if user.videoTrack == nil {
-						//	continue
-						//}
-
-						if err = user.WriteVideoRTP(rtp); err != nil {
-							log4go.Println(err)
-							return
-						}
-
-						//rtp.SSRC = user.videoTrack.SSRC()
-						//if err := user.videoTrack.WriteRTP(rtp); err != nil {
-						//	log4go.Println(err)
-						//	return
-						//}
-					}
-
-				}
-			}
-
-			//rtpBuf := make([]byte, 1400)
-			//for {
-			//	i, err := track.Read(rtpBuf)
-			//	if err != nil {
-			//		return
-			//	}
-			//	for _, user := range this.users {
-			//		if user.id != userId {
-			//			w, err := user.WriteVideo(rtpBuf[:i])
-			//			fmt.Println("video", w, err)
-			//			if err != nil && err != io.ErrClosedPipe {
-			//				fmt.Println(err)
-			//				return
-			//			}
-			//		}
-			//	}
-			//}
-		} else {
-			rtpBuf := make([]byte, 1460)
-			for {
-				i, err := track.Read(rtpBuf)
-				if err != nil {
-					return
-				}
-				for _, user := range this.users {
-					if user.id != userId {
-						if user.audioTrack == nil {
-							continue
-						}
-						_, err = user.WriteAudio(rtpBuf[:i])
-						if err != nil && err != io.ErrClosedPipe {
-							fmt.Println(err)
-							return
-						}
-					}
-				}
-			}
-
-			//for {
-			//	rtp, err := track.ReadRTP()
-			//	if err != nil {
-			//		log4go.Println(err)
-			//		return
-			//	}
-			//	for _, user := range this.users {
-			//		if user.id != userId {
-			//			if err = user.WriteAudioRTP(rtp); err != nil {
-			//				log4go.Println(err)
-			//				return
-			//			}
-			//			//if user.audioTrack == nil {
-			//			//	continue
-			//			//}
-			//			//
-			//			//rtp.SSRC = user.audioTrack.SSRC()
-			//			//if err = user.audioTrack.WriteRTP(rtp); err != nil {
-			//			//	log4go.Println(err)
-			//			//	return
-			//			//}
-			//		}
-			//	}
-			//}
-		}
-	})
-
-	if err = peer.SetRemoteDescription(*remoteSession); err != nil {
-		log4go.Println(err)
-		return
-	}
-
-	answer, err := peer.CreateAnswer(nil)
-	if err != nil {
-		log4go.Println(err)
-		return
-	}
-	if err = peer.SetLocalDescription(answer); err != nil {
-		log4go.Println(err)
-		return
-	}
-
-	localSession = &answer
-
-	return localSession
-}
-
-// User
-type User struct {
-	mu         sync.Mutex
-	id         string
-	peer       *webrtc.PeerConnection
-	videoTrack *webrtc.Track
-	audioTrack *webrtc.Track
-}
-
-func NewUse(userId string) *User {
-	var u = &User{}
-	u.id = userId
-	return u
-}
-
-func (this *User) WriteVideoRTP(p *rtp.Packet) error {
+func (this *Room) Sub(userId, toUserId string, conn net4go.Conn, remoteSession *webrtc.SessionDescription) *webrtc.SessionDescription {
 	this.mu.Lock()
 	defer this.mu.Unlock()
-	if this.videoTrack == nil {
+
+	this.conns[userId] = conn
+
+	var router = this.routers[toUserId]
+	if router == nil {
+		log4go.Println("router not exist:", toUserId)
 		return nil
 	}
-	p.SSRC = this.videoTrack.SSRC()
-	return this.videoTrack.WriteRTP(p)
+
+	local, err := router.Subscribe(userId, remoteSession)
+	if err != nil {
+		log4go.Println(err)
+	}
+	return local
 }
 
-func (this *User) WriteAudioRTP(p *rtp.Packet) (err error) {
+func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.SessionDescription) *webrtc.SessionDescription {
 	this.mu.Lock()
 	defer this.mu.Unlock()
-	if this.audioTrack == nil {
+
+	var router = this.routers[userId]
+	if router != nil {
 		return nil
 	}
-	p.SSRC = this.audioTrack.SSRC()
-	return this.audioTrack.WriteRTP(p)
-}
 
-func (this *User) WriteAudio(b []byte) (int, error) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-	if this.audioTrack == nil {
-		return 0, nil
+	router, err := sfu.NewRouter(userId, api, config, remoteSession)
+	if err != nil {
+		return nil
 	}
-	return this.audioTrack.Write(b)
+
+	this.conns[userId] = conn
+	this.routers[userId] = router
+
+	return router.LocalDescription()
+
+	//this.mu.Lock()
+	//defer this.mu.Unlock()
+	//
+	//var router = this.routers[userId]
+	//
+	//fmt.Println(userId, jType, router)
+	//
+	//if jType == "pub" {
+	//	if router != nil {
+	//		return
+	//	}
+	//
+	//	nRouter, err := sfu.NewRouter(userId, api, config, remoteSession)
+	//	if err != nil {
+	//		return nil
+	//	}
+	//	router = nRouter
+	//
+	//	this.routers[userId] = router
+	//
+	//	return router.LocalDescription()
+	//} else {
+	//	if router == nil {
+	//		return
+	//	}
+	//	localSession, err := router.Subscribe(fmt.Sprintf("%d", rand.Uint32()), remoteSession)
+	//	if err != nil {
+	//		return nil
+	//	}
+	//
+	//	return localSession
+	//}
+	//
+	//return
 }

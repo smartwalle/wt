@@ -37,7 +37,7 @@ func main() {
 	}
 	peer.SetLocalDescription(offer)
 
-	var joinReq = &protocol.JoinRoomReq{}
+	var joinReq = &protocol.PubReq{}
 	joinReq.RoomId = "111"
 	joinReq.UserId = "1"
 	joinReq.SessionDescription = &offer
@@ -53,7 +53,7 @@ func main() {
 
 	var nConn = net4go.NewWsConn(c, p, h)
 
-	nConn.AsyncWritePacket(&protocol.Packet{Type: protocol.PTJoinRoomReq, JoinRoomReq: joinReq}, 0)
+	nConn.AsyncWritePacket(&protocol.Packet{Type: protocol.PTPubReq, PubReq: joinReq}, 0)
 
 	select {}
 }
@@ -67,8 +67,8 @@ func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool 
 	var nPacket = packet.(*protocol.Packet)
 
 	switch nPacket.Type {
-	case protocol.PTJoinRoomRsp:
-		this.peer.SetRemoteDescription(*nPacket.JoinRoomRsp.SessionDescription)
+	case protocol.PTPubRsp:
+		this.peer.SetRemoteDescription(*nPacket.PubRsp.SessionDescription)
 
 		var dc, _ = this.peer.CreateDataChannel("haha", nil)
 		for {

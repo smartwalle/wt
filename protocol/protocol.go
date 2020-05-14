@@ -29,27 +29,54 @@ func (this *WSProtocol) Unmarshal(r io.Reader) (net4go.Packet, error) {
 type PacketType int
 
 const (
-	PTJoinRoomReq PacketType = 1
-	PTJoinRoomRsp PacketType = 2
+	PTPubReq PacketType = 1
+	PTPubRsp PacketType = 2
+
+	PTSubReq PacketType = 3
+	PTSubRsp PacketType = 4
+
+	PTNewPubNotify PacketType = 5
 )
 
 // Packet
 type Packet struct {
-	Type        PacketType   `json:"type"`
-	JoinRoomReq *JoinRoomReq `json:"join_room_req"`
-	JoinRoomRsp *JoinRoomRsp `json:"join_room_rsp"`
+	Type         PacketType    `json:"type"`
+	PubReq       *PubReq       `json:"pub_req,omitempty"`
+	PubRsp       *PubRsp       `json:"pub_rsp,omitempty"`
+	SubReq       *SubReq       `json:"sub_req,omitempty"`
+	SubRsp       *SubRsp       `json:"sub_rsp,omitempty"`
+	NewPubNotify *NewPubNotify `json:"new_pub_notify,omitempty"`
 }
 
-type JoinRoomReq struct {
+type PubReq struct {
 	RoomId             string                     `json:"room_id"`
 	UserId             string                     `json:"user_id"`
 	SessionDescription *webrtc.SessionDescription `json:"session_description"`
 }
 
-type JoinRoomRsp struct {
+type PubRsp struct {
 	RoomId             string                     `json:"room_id"`
 	UserId             string                     `json:"user_id"`
 	SessionDescription *webrtc.SessionDescription `json:"session_description"`
+}
+
+type SubReq struct {
+	RoomId             string                     `json:"room_id"`
+	UserId             string                     `json:"user_id"`
+	ToUserId           string                     `json:"to_user_id"`
+	SessionDescription *webrtc.SessionDescription `json:"session_description"`
+}
+
+type SubRsp struct {
+	RoomId             string                     `json:"room_id"`
+	UserId             string                     `json:"user_id"`
+	ToUserId           string                     `json:"to_user_id"`
+	SessionDescription *webrtc.SessionDescription `json:"session_description"`
+}
+
+type NewPubNotify struct {
+	RoomId string   `json:"room_id"`
+	UserId []string `json:"user_id"`
 }
 
 func (this *Packet) Marshal() ([]byte, error) {

@@ -17,7 +17,7 @@
 <body>
 <video id="video1" width="320" height="240" autoplay muted controls hidden></video>
 <br/>
-<video id="video" width="320" height="240" autoplay controls hidden></video>
+<video id="video" width="320" height="240" autoplay controls></video>
 <br/>
 <br/>
 <br/>
@@ -78,13 +78,17 @@
         var join = {
           type: 1,
           join_room_req: {
-            room_id: "1",
-            user_id: Math.random().toString(36).substring(2),
+            user_id: "pg61l7vj76q1",
+            // type:"pub",
+            type: "sub",
+            room_id: "xsnxdxvgnyn",
+            // user_id: Math.random().toString(36).substring(2),
             session_description: pc.localDescription,
           },
         };
         document.getElementById('localSDP').value = pc.localDescription.sdp;
         sock.send(JSON.stringify(join));
+        console.log("onicecandidate");
       }
     }
 
@@ -92,8 +96,10 @@
       if (e && e.streams) {
         console.log('收到对方音频/视频流数据...');
         var stream = e.streams[0]
-        var el = document.getElementById(stream.id);
+        var el = document.getElementById("video");
         el.srcObject = stream;
+
+        console.log(stream)
       }
     }
 
@@ -105,16 +111,17 @@
       dc.send("来自客户端的消息");
     }
 
-    navigator.mediaDevices.getUserMedia({video: false, audio: true})
+    navigator.mediaDevices.getUserMedia({video: true, audio: true})
       .then(stream => {
         document.getElementById('video1').srcObject = stream
-        stream.getAudioTracks().forEach(track => {
+        stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
         });
 
         pc.createOffer()
           .then(d => {
             pc.setLocalDescription(d);
+            console.log(d.sdp);
           })
           .catch(log);
       }).catch(log);
