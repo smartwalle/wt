@@ -53,6 +53,8 @@
 
     socket.onclose = function (e) {
       console.log("websocket connection closed (" + e.code + ")");
+
+      document.getElementById("videos").innerHTML = "";
     }
 
     socket.onmessage = function (e) {

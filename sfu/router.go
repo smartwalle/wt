@@ -156,14 +156,11 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 			defer this.mu.Unlock()
 			var sub = this.subs[subscriber]
 			if sub == peer {
+				log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
+
 				delete(this.subs, subscriber)
+				peer = nil
 			}
-			if peer == nil {
-				return
-			}
-			peer.Close()
-			peer = nil
-			log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
 		}
 	})
 
@@ -205,6 +202,8 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 
 	this.subs[subscriber] = sub
 
+	log4go.Printf("%s 订阅 %s\n", subscriber, this.id)
+
 	return sub.LocalDescription(), nil
 }
 
@@ -220,8 +219,9 @@ func (this *Router) Unsubscribe(subscriber string) {
 
 func (this *Router) rewrite(src, dst *webrtc.Track) error {
 	defer func() {
-		log4go.Println("rewrite end...")
+		log4go.Println(this.id, "rewrite end...")
 	}()
+	log4go.Println(this.id, "rewrite begin...")
 
 	var rtpBuf = make([]byte, 1460)
 	var i int
@@ -240,11 +240,11 @@ func (this *Router) rewrite(src, dst *webrtc.Track) error {
 }
 
 func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
-	defer func() {
-		log4go.Println("rewriteRTP end...")
-	}()
-
 	var err error
+	defer func() {
+		log4go.Println(this.id, "rewrite end...", err)
+	}()
+	log4go.Println(this.id, "rewrite begin...")
 	var packet *rtp.Packet
 	for {
 		packet, err = src.ReadRTP()

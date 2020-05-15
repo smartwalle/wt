@@ -228,8 +228,19 @@ func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.Ses
 		if err != nil {
 			return nil
 		}
+
+		var c = this.conns[userId]
+		c.Del("room_id")
+		c.Del("user_id")
+
 		this.conns[userId] = conn
 		this.routers[userId] = router
+		log4go.Println(userId, "重新发布")
+
+		if c != nil {
+			c.Close()
+		}
+
 		return localSession
 	}
 
