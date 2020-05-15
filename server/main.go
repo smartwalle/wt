@@ -228,6 +228,8 @@ func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.Ses
 		if err != nil {
 			return nil
 		}
+		this.conns[userId] = conn
+		this.routers[userId] = router
 		return localSession
 	}
 
