@@ -24,6 +24,8 @@ type Router struct {
 
 	videoTrack *webrtc.Track
 	audioTrack *webrtc.Track
+
+	trackInfos map[uint32]*trackInfo
 }
 
 func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration, remoteSession *webrtc.SessionDescription) (*Router, error) {
@@ -33,6 +35,7 @@ func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration, remoteS
 	r.wtAPI = api
 	r.wtConfig = config
 	r.subs = make(map[string]*webrtc.PeerConnection)
+	r.trackInfos = make(map[uint32]*trackInfo)
 
 	peer, err := r.addPub(remoteSession)
 	if err != nil {
@@ -154,13 +157,19 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			this.mu.Lock()
 			defer this.mu.Unlock()
-			var sub = this.subs[subscriber]
-			if sub == peer {
-				log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
-
+			var sub, ok = this.subs[subscriber]
+			if ok && sub == peer {
 				delete(this.subs, subscriber)
+				peer.Close()
 				peer = nil
+				log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
 			}
+		} else if state == webrtc.PeerConnectionStateConnected {
+			this.mu.Lock()
+			defer this.mu.Unlock()
+			this.subs[subscriber] = peer
+
+			log4go.Printf("%s 订阅 %s 成功 \n", subscriber, this.id)
 		}
 	})
 
@@ -186,21 +195,15 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 }
 
 func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
-	sub := this.subs[subscriber]
+	var sub = this.subs[subscriber]
 	if sub != nil {
 		sub.Close()
-		delete(this.subs, subscriber)
 	}
 
 	sub, err = this.addSub(subscriber, remoteSession)
 	if err != nil {
 		return nil, err
 	}
-
-	this.subs[subscriber] = sub
 
 	log4go.Printf("%s 订阅 %s\n", subscriber, this.id)
 
@@ -209,34 +212,40 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 
 func (this *Router) Unsubscribe(subscriber string) {
 	this.mu.Lock()
+	var sub = this.subs[subscriber]
+	delete(this.subs, subscriber)
 	defer this.mu.Unlock()
-	var peer = this.subs[subscriber]
-	if peer != nil {
-		peer.Close()
-		delete(this.subs, subscriber)
+
+	if sub != nil {
+		sub.Close()
 	}
 }
 
-func (this *Router) rewrite(src, dst *webrtc.Track) error {
-	defer func() {
-		log4go.Println(this.id, "rewrite end...")
-	}()
-	log4go.Println(this.id, "rewrite begin...")
+//func (this *Router) rewrite(src, dst *webrtc.Track) error {
+//	defer func() {
+//		log4go.Println(this.id, "rewrite end...")
+//	}()
+//	log4go.Println(this.id, "rewrite begin...")
+//
+//	var rtpBuf = make([]byte, 1460)
+//	var i int
+//	var err error
+//	for {
+//		i, err = src.Read(rtpBuf)
+//		if err != nil {
+//			return err
+//		}
+//		_, err = dst.Write(rtpBuf[:i])
+//		if err != nil && err != io.ErrClosedPipe {
+//			return err
+//		}
+//	}
+//	return nil
+//}
 
-	var rtpBuf = make([]byte, 1460)
-	var i int
-	var err error
-	for {
-		i, err = src.Read(rtpBuf)
-		if err != nil {
-			return err
-		}
-		_, err = dst.Write(rtpBuf[:i])
-		if err != nil && err != io.ErrClosedPipe {
-			return err
-		}
-	}
-	return nil
+type trackInfo struct {
+	timestamp      uint32
+	sequenceNumber uint16
 }
 
 func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
@@ -245,12 +254,40 @@ func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
 		log4go.Println(this.id, "rewrite end...", err)
 	}()
 	log4go.Println(this.id, "rewrite begin...")
+
+	var info = this.trackInfos[dst.SSRC()]
+	if info == nil {
+		info = &trackInfo{}
+		this.trackInfos[dst.SSRC()] = info
+	}
+
+	var lastTimestamp uint32 // 用于记录当前 track 最后一包的 timestamp 信息
+	var tempTimestamp uint32 // 中间变量
 	var packet *rtp.Packet
-	for {
+
+	for ; ; info.sequenceNumber++ {
 		packet, err = src.ReadRTP()
 		if err != nil {
 			return err
 		}
+
+		// 记录当前包的 timestamp  信息
+		tempTimestamp = packet.Timestamp
+		if lastTimestamp == 0 {
+			// 如果 lastTimestamp 为 0，是第一个数据包，则把该包的 timestamp 设置为 0
+			packet.Timestamp = 0
+		} else {
+			// 如果 lastTimestamp 不为 0，不是第一个数据包，则把该包的 timestamp 设置为距离上一包的时间差
+			packet.Timestamp -= lastTimestamp
+		}
+		// 将 lastTimestamp 设置为当前包的 timestamp
+		lastTimestamp = tempTimestamp
+
+		// 修正并记录下该 track 的正常 timestamp 信息
+		info.timestamp += packet.Timestamp
+
+		packet.Timestamp = info.timestamp
+		packet.SequenceNumber = info.sequenceNumber
 		packet.SSRC = dst.SSRC()
 		err = dst.WriteRTP(packet)
 		if err != nil && err != io.ErrClosedPipe {
