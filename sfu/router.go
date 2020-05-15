@@ -12,8 +12,10 @@ import (
 )
 
 type Router struct {
-	id       string
-	mu       *sync.Mutex
+	id     string
+	mu     *sync.Mutex
+	closed bool
+
 	wtAPI    *webrtc.API
 	wtConfig *webrtc.Configuration
 
@@ -57,26 +59,30 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 		return nil, err
 	}
 
-	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log4go.Println(state)
-	})
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
-			if peer != nil {
-				peer.Close()
+			if peer == nil {
+				return
 			}
+			peer.Close()
+			peer = nil
+			log4go.Printf("%s 取消发布 \n", this.id)
 		}
 	})
 
-	if this.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), webrtc.RTPCodecTypeAudio.String(), this.id); err != nil {
-		log4go.Println(err)
-		return
+	if this.audioTrack == nil {
+		if this.audioTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeOpus, rand.Uint32(), webrtc.RTPCodecTypeAudio.String(), this.id); err != nil {
+			log4go.Println(err)
+			return
+		}
 	}
 	peer.AddTrack(this.audioTrack)
 
-	if this.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), webrtc.RTPCodecTypeVideo.String(), this.id); err != nil {
-		log4go.Println(err)
-		return
+	if this.videoTrack == nil {
+		if this.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), webrtc.RTPCodecTypeVideo.String(), this.id); err != nil {
+			log4go.Println(err)
+			return
+		}
 	}
 	peer.AddTrack(this.videoTrack)
 
@@ -93,7 +99,11 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 
 				ticker := time.NewTicker(time.Second * 3)
 				for range ticker.C {
-					peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}})
+					if peer != nil {
+						if err := peer.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: track.SSRC()}}); err != nil {
+							return
+						}
+					}
 				}
 			}()
 
@@ -101,7 +111,7 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 			this.rewriteRTP(track, this.videoTrack)
 		case webrtc.RTPCodecTypeAudio:
 			//this.audioTrack = nTrack
-			this.rewrite(track, this.audioTrack)
+			this.rewriteRTP(track, this.audioTrack)
 		}
 	})
 
@@ -140,17 +150,20 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
 		return nil, err
 	}
-	peer.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-	})
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			this.mu.Lock()
+			defer this.mu.Unlock()
 			var sub = this.subs[subscriber]
 			if sub == peer {
 				delete(this.subs, subscriber)
 			}
-			this.mu.Unlock()
+			if peer == nil {
+				return
+			}
 			peer.Close()
+			peer = nil
+			log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
 		}
 	})
 
@@ -201,10 +214,15 @@ func (this *Router) Unsubscribe(subscriber string) {
 	var peer = this.subs[subscriber]
 	if peer != nil {
 		peer.Close()
+		delete(this.subs, subscriber)
 	}
 }
 
 func (this *Router) rewrite(src, dst *webrtc.Track) error {
+	defer func() {
+		log4go.Println("rewrite end...")
+	}()
+
 	var rtpBuf = make([]byte, 1460)
 	var i int
 	var err error
@@ -222,6 +240,10 @@ func (this *Router) rewrite(src, dst *webrtc.Track) error {
 }
 
 func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
+	defer func() {
+		log4go.Println("rewriteRTP end...")
+	}()
+
 	var err error
 	var packet *rtp.Packet
 	for {
@@ -247,6 +269,15 @@ func (this *Router) LocalDescription() *webrtc.SessionDescription {
 
 func (this *Router) Close() error {
 	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	log4go.Println(this.id, "close")
+
+	if this.closed {
+		return nil
+	}
+
+	this.closed = true
 	if this.peer != nil {
 		this.peer.Close()
 	}
@@ -254,6 +285,5 @@ func (this *Router) Close() error {
 		sub.Close()
 		delete(this.subs, key)
 	}
-	this.mu.Unlock()
 	return nil
 }

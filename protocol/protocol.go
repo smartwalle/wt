@@ -36,6 +36,7 @@ const (
 	PTSubRsp PacketType = 4
 
 	PTNewPubNotify PacketType = 5
+	PTDelPubNotify PacketType = 6
 )
 
 // Packet
@@ -46,6 +47,7 @@ type Packet struct {
 	SubReq       *SubReq       `json:"sub_req,omitempty"`
 	SubRsp       *SubRsp       `json:"sub_rsp,omitempty"`
 	NewPubNotify *NewPubNotify `json:"new_pub_notify,omitempty"`
+	DelPubNotify *DelPubNotify `json:"del_pub_notify,omitempty"`
 }
 
 type PubReq struct {
@@ -77,6 +79,11 @@ type SubRsp struct {
 type NewPubNotify struct {
 	RoomId string   `json:"room_id"`
 	UserId []string `json:"user_id"`
+}
+
+type DelPubNotify struct {
+	RoomId string `json:"room_id"`
+	UserId string `json:"user_id"`
 }
 
 func (this *Packet) Marshal() ([]byte, error) {

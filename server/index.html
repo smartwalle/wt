@@ -15,13 +15,15 @@
 <body>
 <div id="videos">
 </div>
-<button class="publish" onclick="prePublish()">Publish</button>
+<button class="publish" style="height: 50px; width: 100px;" onclick="prePublish()">Publish</button>
 <script>
-  var userId = Math.random().toString(36).substring(2);
-  var roomId = "1";
+  var paths = location.pathname.split("/")
+  var roomId = paths[1];
+  var userId = paths[2]; // "3"// Math.random().toString(36).substring(2);
   var socket = null;
   var wsURI = location.protocol.replace("http", "ws") + "//" + location.host + "/ws";
 
+  console.log(roomId);
   console.log(userId);
 
   var iceServers = [
@@ -40,6 +42,7 @@
   const PTSubRsp = 4;
 
   const PTNewPubNotify = 5;
+  const PTDelPubNotify = 6;
 
 
   window.onload = function () {
@@ -75,6 +78,17 @@
                 preSubscribe(id);
               }
             })
+          }
+          break;
+        }
+        case PTDelPubNotify: {
+          if (data.del_pub_notify != null) {
+            var uid = data.del_pub_notify.user_id;
+            var video = document.getElementById("video" + uid)
+            if (video != null) {
+              video.remove()
+            }
+            subs[uid] = null;
           }
           break;
         }
@@ -147,6 +161,8 @@
             session_description: sub.localDescription,
           },
         };
+
+        console.log(userId, "订阅", toUserId);
         socket.send(JSON.stringify(subReq));
       }
     };
@@ -155,16 +171,15 @@
       var stream = e.streams[0];
       var video = document.getElementById("video" + toUserId)
       console.log(stream);
-      console.log(video);
       if (video === null) {
         video = document.createElement("video");
         video.id = "video" + toUserId
-        video.controls = true;
-        video.autoplay = true;
-        video.width = 200;
-        video.height = 150;
         document.getElementById('videos').appendChild(video);
       }
+      video.controls = true;
+      video.autoplay = true;
+      video.width = 200;
+      video.height = 150;
       video.srcObject = stream;
     };
 

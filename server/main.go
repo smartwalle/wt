@@ -106,6 +106,8 @@ func (this *ConnHandler) OnMessage(conn net4go.Conn, packet net4go.Packet) bool 
 	case protocol.PTSubReq:
 		var subReq = nPacket.SubReq
 
+		log4go.Println(subReq.UserId, "->", subReq.ToUserId)
+
 		var room = this.rm.GetRoom(subReq.RoomId)
 		var localSession = room.Sub(subReq.UserId, subReq.ToUserId, conn, subReq.SessionDescription)
 
@@ -133,7 +135,6 @@ func (this *ConnHandler) OnClose(conn net4go.Conn, err error) {
 			if uValue != nil {
 
 				room.mu.Lock()
-				defer room.mu.Unlock()
 
 				var userId = uValue.(string)
 				delete(room.conns, userId)
@@ -143,6 +144,15 @@ func (this *ConnHandler) OnClose(conn net4go.Conn, err error) {
 					router.Close()
 				}
 				delete(room.routers, userId)
+
+				room.mu.Unlock()
+
+				var delNotify = &protocol.DelPubNotify{}
+				delNotify.RoomId = roomId
+				delNotify.UserId = userId
+				for _, c := range room.conns {
+					c.AsyncWritePacket(&protocol.Packet{Type: protocol.PTDelPubNotify, DelPubNotify: delNotify}, 0)
+				}
 			}
 		}
 	}
@@ -197,7 +207,7 @@ func (this *Room) Sub(userId, toUserId string, conn net4go.Conn, remoteSession *
 
 	var router = this.routers[toUserId]
 	if router == nil {
-		log4go.Println("router not exist:", toUserId)
+		log4go.Println("router not exist:", userId, "->", toUserId)
 		return nil
 	}
 
