@@ -236,6 +236,8 @@ func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.Ses
 		return nil
 	}
 
+	log4go.Println(userId, "创建成功")
+
 	this.conns[userId] = conn
 	this.routers[userId] = router
 
