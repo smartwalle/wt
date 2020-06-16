@@ -137,10 +137,6 @@ func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSess
 }
 
 func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
-	if this.videoTrack == nil || this.audioTrack == nil {
-		return nil, ErrUnpublished
-	}
-
 	var peer *webrtc.PeerConnection
 
 	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
@@ -185,7 +181,14 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 }
 
 func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
+	this.mu.Lock()
+	if this.videoTrack == nil || this.audioTrack == nil {
+		this.mu.Unlock()
+		return nil, ErrUnpublished
+	}
 	var sub = this.subscribes[subscriber]
+	this.mu.Unlock()
+
 	if sub != nil {
 		sub.Close()
 	}
