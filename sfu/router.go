@@ -19,8 +19,8 @@ type Router struct {
 	wtAPI    *webrtc.API
 	wtConfig *webrtc.Configuration
 
-	peer *webrtc.PeerConnection
-	subs map[string]*webrtc.PeerConnection
+	publisher  *webrtc.PeerConnection
+	subscribes map[string]*webrtc.PeerConnection
 
 	videoTrack *webrtc.Track
 	audioTrack *webrtc.Track
@@ -34,14 +34,14 @@ func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration, remoteS
 	r.mu = &sync.Mutex{}
 	r.wtAPI = api
 	r.wtConfig = config
-	r.subs = make(map[string]*webrtc.PeerConnection)
+	r.subscribes = make(map[string]*webrtc.PeerConnection)
 	r.trackInfos = make(map[uint32]*trackInfo)
 
 	peer, err := r.addPub(remoteSession)
 	if err != nil {
 		return nil, err
 	}
-	r.peer = peer
+	r.publisher = peer
 
 	return r, nil
 }
@@ -90,7 +90,7 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 	peer.AddTrack(this.videoTrack)
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
-		//var nTrack, err = this.peer.NewTrack(track.PayloadType(), rand.Uint32(), track.Kind().String(), track.ID())
+		//var nTrack, err = this.publisher.NewTrack(track.PayloadType(), rand.Uint32(), track.Kind().String(), track.ID())
 		//if err != nil {
 		//	return
 		//}
@@ -136,15 +136,15 @@ func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSess
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
-	if this.peer != nil {
-		this.peer.Close()
+	if this.publisher != nil {
+		this.publisher.Close()
 	}
 
 	peer, err := this.addPub(remoteSession)
 	if err != nil {
 		return nil, err
 	}
-	this.peer = peer
+	this.publisher = peer
 
 	return peer.LocalDescription(), nil
 }
@@ -157,9 +157,9 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			this.mu.Lock()
 			defer this.mu.Unlock()
-			var sub, ok = this.subs[subscriber]
+			var sub, ok = this.subscribes[subscriber]
 			if ok && sub == peer {
-				delete(this.subs, subscriber)
+				delete(this.subscribes, subscriber)
 				peer.Close()
 				peer = nil
 				log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
@@ -167,7 +167,7 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		} else if state == webrtc.PeerConnectionStateConnected {
 			this.mu.Lock()
 			defer this.mu.Unlock()
-			this.subs[subscriber] = peer
+			this.subscribes[subscriber] = peer
 
 			log4go.Printf("%s 订阅 %s 成功 \n", subscriber, this.id)
 		}
@@ -195,7 +195,7 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 }
 
 func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
-	var sub = this.subs[subscriber]
+	var sub = this.subscribes[subscriber]
 	if sub != nil {
 		sub.Close()
 	}
@@ -212,8 +212,8 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 
 func (this *Router) Unsubscribe(subscriber string) {
 	this.mu.Lock()
-	var sub = this.subs[subscriber]
-	delete(this.subs, subscriber)
+	var sub = this.subscribes[subscriber]
+	delete(this.subscribes, subscriber)
 	defer this.mu.Unlock()
 
 	if sub != nil {
@@ -298,8 +298,8 @@ func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
 }
 
 func (this *Router) LocalDescription() *webrtc.SessionDescription {
-	if this.peer != nil {
-		return this.peer.LocalDescription()
+	if this.publisher != nil {
+		return this.publisher.LocalDescription()
 	}
 	return nil
 }
@@ -315,12 +315,12 @@ func (this *Router) Close() error {
 	}
 
 	this.closed = true
-	if this.peer != nil {
-		this.peer.Close()
+	if this.publisher != nil {
+		this.publisher.Close()
 	}
-	for key, sub := range this.subs {
+	for key, sub := range this.subscribes {
 		sub.Close()
-		delete(this.subs, key)
+		delete(this.subscribes, key)
 	}
 	return nil
 }
