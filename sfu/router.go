@@ -1,6 +1,7 @@
 package sfu
 
 import (
+	"errors"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v2"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"time"
 )
+
+var ErrUnpublished = errors.New("unpublished")
 
 type Router struct {
 	id     string
@@ -28,7 +31,7 @@ type Router struct {
 	trackInfos map[uint32]*trackInfo
 }
 
-func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration, remoteSession *webrtc.SessionDescription) (*Router, error) {
+func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration) (*Router, error) {
 	var r = &Router{}
 	r.id = id
 	r.mu = &sync.Mutex{}
@@ -36,13 +39,6 @@ func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration, remoteS
 	r.wtConfig = config
 	r.subscribes = make(map[string]*webrtc.PeerConnection)
 	r.trackInfos = make(map[uint32]*trackInfo)
-
-	peer, err := r.addPub(remoteSession)
-	if err != nil {
-		return nil, err
-	}
-	r.publisher = peer
-
 	return r, nil
 }
 
@@ -50,7 +46,9 @@ func (this *Router) GetId() string {
 	return this.id
 }
 
-func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webrtc.PeerConnection, err error) {
+func (this *Router) initPub(remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
+	var peer *webrtc.PeerConnection
+
 	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
 		return nil, err
 	}
@@ -90,11 +88,6 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 	peer.AddTrack(this.videoTrack)
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
-		//var nTrack, err = this.publisher.NewTrack(track.PayloadType(), rand.Uint32(), track.Kind().String(), track.ID())
-		//if err != nil {
-		//	return
-		//}
-
 		switch track.Kind() {
 		case webrtc.RTPCodecTypeVideo:
 			go func() {
@@ -109,11 +102,8 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 					}
 				}
 			}()
-
-			//this.videoTrack = nTrack
 			this.rewriteRTP(track, this.videoTrack)
 		case webrtc.RTPCodecTypeAudio:
-			//this.audioTrack = nTrack
 			this.rewriteRTP(track, this.audioTrack)
 		}
 	})
@@ -129,7 +119,10 @@ func (this *Router) addPub(remoteSession *webrtc.SessionDescription) (peer *webr
 	if err = peer.SetLocalDescription(answer); err != nil {
 		return nil, err
 	}
-	return peer, nil
+
+	this.publisher = peer
+
+	return this.publisher.LocalDescription(), nil
 }
 
 func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
@@ -140,16 +133,16 @@ func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSess
 		this.publisher.Close()
 	}
 
-	peer, err := this.addPub(remoteSession)
-	if err != nil {
-		return nil, err
-	}
-	this.publisher = peer
-
-	return peer.LocalDescription(), nil
+	return this.initPub(remoteSession)
 }
 
-func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescription) (peer *webrtc.PeerConnection, err error) {
+func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
+	if this.videoTrack == nil || this.audioTrack == nil {
+		return nil, ErrUnpublished
+	}
+
+	var peer *webrtc.PeerConnection
+
 	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
 		return nil, err
 	}
@@ -173,12 +166,8 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		}
 	})
 
-	if this.videoTrack != nil {
-		peer.AddTrack(this.videoTrack)
-	}
-	if this.audioTrack != nil {
-		peer.AddTrack(this.audioTrack)
-	}
+	peer.AddTrack(this.videoTrack)
+	peer.AddTrack(this.audioTrack)
 
 	if err = peer.SetRemoteDescription(*remoteSession); err != nil {
 		return nil, err
@@ -191,7 +180,8 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 	if err = peer.SetLocalDescription(answer); err != nil {
 		return
 	}
-	return peer, nil
+
+	return peer.LocalDescription(), nil
 }
 
 func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
@@ -200,14 +190,14 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 		sub.Close()
 	}
 
-	sub, err = this.addSub(subscriber, remoteSession)
+	localSession, err = this.addSub(subscriber, remoteSession)
 	if err != nil {
 		return nil, err
 	}
 
 	log4go.Printf("%s 订阅 %s\n", subscriber, this.id)
 
-	return sub.LocalDescription(), nil
+	return localSession, nil
 }
 
 func (this *Router) Unsubscribe(subscriber string) {
@@ -220,28 +210,6 @@ func (this *Router) Unsubscribe(subscriber string) {
 		sub.Close()
 	}
 }
-
-//func (this *Router) rewrite(src, dst *webrtc.Track) error {
-//	defer func() {
-//		log4go.Println(this.id, "rewrite end...")
-//	}()
-//	log4go.Println(this.id, "rewrite begin...")
-//
-//	var rtpBuf = make([]byte, 1460)
-//	var i int
-//	var err error
-//	for {
-//		i, err = src.Read(rtpBuf)
-//		if err != nil {
-//			return err
-//		}
-//		_, err = dst.Write(rtpBuf[:i])
-//		if err != nil && err != io.ErrClosedPipe {
-//			return err
-//		}
-//	}
-//	return nil
-//}
 
 type trackInfo struct {
 	timestamp      uint32
@@ -298,6 +266,8 @@ func (this *Router) rewriteRTP(src, dst *webrtc.Track) error {
 }
 
 func (this *Router) LocalDescription() *webrtc.SessionDescription {
+	this.mu.Lock()
+	defer this.mu.Unlock()
 	if this.publisher != nil {
 		return this.publisher.LocalDescription()
 	}

@@ -222,39 +222,67 @@ func (this *Room) Pub(userId string, conn net4go.Conn, remoteSession *webrtc.Ses
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
+	// 清除旧连接绑定的信息
+	var c = this.conns[userId]
+	if c != nil {
+		c.Del("room_id")
+		c.Del("user_id")
+	}
+
 	var router = this.routers[userId]
-	if router != nil {
-		localSession, err := router.Publish(remoteSession)
+	if router == nil {
+		var err error
+		router, err = sfu.NewRouter(userId, api, config)
 		if err != nil {
 			return nil
 		}
 
-		var c = this.conns[userId]
-		c.Del("room_id")
-		c.Del("user_id")
-
 		this.conns[userId] = conn
 		this.routers[userId] = router
-		log4go.Println(userId, "重新发布")
 
-		if c != nil {
-			c.Close()
-		}
-
-		return localSession
+		log4go.Println(userId, "创建成功")
 	}
 
-	router, err := sfu.NewRouter(userId, api, config, remoteSession)
+	localSession, err := router.Publish(remoteSession)
 	if err != nil {
 		return nil
 	}
 
-	log4go.Println(userId, "创建成功")
+	return localSession
 
-	this.conns[userId] = conn
-	this.routers[userId] = router
-
-	return router.LocalDescription()
+	//var router = this.routers[userId]
+	//if router != nil {
+	//	localSession, err := router.Publish(remoteSession)
+	//	if err != nil {
+	//		return nil
+	//	}
+	//
+	//	var c = this.conns[userId]
+	//	c.Del("room_id")
+	//	c.Del("user_id")
+	//
+	//	this.conns[userId] = conn
+	//	this.routers[userId] = router
+	//	log4go.Println(userId, "重新发布")
+	//
+	//	if c != nil {
+	//		c.Close()
+	//	}
+	//
+	//	return localSession
+	//}
+	//
+	//router, err := sfu.NewRouter(userId, api, config, remoteSession)
+	//if err != nil {
+	//	return nil
+	//}
+	//
+	//log4go.Println(userId, "创建成功")
+	//
+	//this.conns[userId] = conn
+	//this.routers[userId] = router
+	//
+	//return router.LocalDescription()
 
 	//this.mu.Lock()
 	//defer this.mu.Unlock()
