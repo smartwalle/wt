@@ -77,7 +77,7 @@ func (this *Router) initPub(remoteSession *webrtc.SessionDescription) (localSess
 			return
 		}
 	}
-	peer.AddTrack(this.audioTrack)
+	//peer.AddTrack(this.audioTrack)
 
 	if this.videoTrack == nil {
 		if this.videoTrack, err = peer.NewTrack(webrtc.DefaultPayloadTypeVP8, rand.Uint32(), webrtc.RTPCodecTypeVideo.String(), this.id); err != nil {
@@ -85,7 +85,7 @@ func (this *Router) initPub(remoteSession *webrtc.SessionDescription) (localSess
 			return
 		}
 	}
-	peer.AddTrack(this.videoTrack)
+	//peer.AddTrack(this.videoTrack)
 
 	peer.OnTrack(func(track *webrtc.Track, receiver *webrtc.RTPReceiver) {
 		switch track.Kind() {
