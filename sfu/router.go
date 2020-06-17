@@ -15,15 +15,14 @@ import (
 var ErrUnpublished = errors.New("unpublished")
 
 type Router struct {
-	id     string
-	mu     *sync.Mutex
-	closed bool
+	id string
+	mu *sync.Mutex
 
 	wtAPI    *webrtc.API
 	wtConfig *webrtc.Configuration
 
-	publisher  *webrtc.PeerConnection
-	subscribes map[string]*webrtc.PeerConnection
+	publisher   *webrtc.PeerConnection
+	subscribers map[string]*webrtc.PeerConnection
 
 	videoTrack *webrtc.Track
 	audioTrack *webrtc.Track
@@ -37,7 +36,7 @@ func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration) (*Route
 	r.mu = &sync.Mutex{}
 	r.wtAPI = api
 	r.wtConfig = config
-	r.subscribes = make(map[string]*webrtc.PeerConnection)
+	r.subscribers = make(map[string]*webrtc.PeerConnection)
 	r.trackInfos = make(map[uint32]*trackInfo)
 	return r, nil
 }
@@ -146,9 +145,9 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		if state == webrtc.PeerConnectionStateDisconnected || state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			this.mu.Lock()
 			defer this.mu.Unlock()
-			var sub, ok = this.subscribes[subscriber]
+			var sub, ok = this.subscribers[subscriber]
 			if ok && sub == peer {
-				delete(this.subscribes, subscriber)
+				delete(this.subscribers, subscriber)
 				peer.Close()
 				peer = nil
 				log4go.Printf("%s 取消订阅 %s \n", subscriber, this.id)
@@ -156,7 +155,7 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 		} else if state == webrtc.PeerConnectionStateConnected {
 			this.mu.Lock()
 			defer this.mu.Unlock()
-			this.subscribes[subscriber] = peer
+			this.subscribers[subscriber] = peer
 
 			log4go.Printf("%s 订阅 %s 成功 \n", subscriber, this.id)
 		}
@@ -186,7 +185,7 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 		this.mu.Unlock()
 		return nil, ErrUnpublished
 	}
-	var sub = this.subscribes[subscriber]
+	var sub = this.subscribers[subscriber]
 	this.mu.Unlock()
 
 	if sub != nil {
@@ -205,8 +204,8 @@ func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDe
 
 func (this *Router) Unsubscribe(subscriber string) {
 	this.mu.Lock()
-	var sub = this.subscribes[subscriber]
-	delete(this.subscribes, subscriber)
+	var sub = this.subscribers[subscriber]
+	delete(this.subscribers, subscriber)
 	defer this.mu.Unlock()
 
 	if sub != nil {
@@ -283,17 +282,12 @@ func (this *Router) Close() error {
 
 	log4go.Println(this.id, "close")
 
-	if this.closed {
-		return nil
-	}
-
-	this.closed = true
 	if this.publisher != nil {
 		this.publisher.Close()
 	}
-	for key, sub := range this.subscribes {
+	for key, sub := range this.subscribers {
 		sub.Close()
-		delete(this.subscribes, key)
+		delete(this.subscribers, key)
 	}
 	return nil
 }
