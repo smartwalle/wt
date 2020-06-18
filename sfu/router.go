@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	ErrUnpublished        = errors.New("unpublished")
-	ErrEmptyRemoteSession = errors.New("remote session must not be nil")
+	ErrUnpublished  = errors.New("unpublished")
+	ErrEmptySession = errors.New("remote session must not be nil")
 )
 
 type Router struct {
@@ -129,7 +129,7 @@ func (this *Router) initPub(remoteSession *webrtc.SessionDescription) (localSess
 
 func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
 	if remoteSession == nil {
-		return nil, ErrEmptyRemoteSession
+		return nil, ErrEmptySession
 	}
 
 	this.mu.Lock()
@@ -188,7 +188,7 @@ func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescr
 
 func (this *Router) Subscribe(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
 	if remoteSession == nil {
-		return nil, ErrEmptyRemoteSession
+		return nil, ErrEmptySession
 	}
 
 	this.mu.Lock()
