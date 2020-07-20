@@ -58,11 +58,6 @@ func serveHTTP(h net4go.Handler, p net4go.Protocol) {
 		t.Execute(writer, nil)
 	})
 
-	http.HandleFunc("/sfu", func(writer http.ResponseWriter, request *http.Request) {
-		t, _ := template.ParseFiles("sfu.html")
-		t.Execute(writer, nil)
-	})
-
 	fmt.Println("http://localhost:6656/")
 	http.ListenAndServe(":6656", nil)
 }
