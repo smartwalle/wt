@@ -22,7 +22,7 @@ type Router struct {
 	mu *sync.Mutex
 
 	wtAPI    *webrtc.API
-	wtConfig *webrtc.Configuration
+	wtConfig webrtc.Configuration
 
 	publisher   *webrtc.PeerConnection
 	subscribers map[string]*webrtc.PeerConnection
@@ -33,7 +33,7 @@ type Router struct {
 	trackInfos map[uint32]*trackInfo
 }
 
-func NewRouter(id string, api *webrtc.API, config *webrtc.Configuration) (*Router, error) {
+func NewRouter(id string, api *webrtc.API, config webrtc.Configuration) (*Router, error) {
 	var r = &Router{}
 	r.id = id
 	r.mu = &sync.Mutex{}
@@ -51,7 +51,7 @@ func (this *Router) GetId() string {
 func (this *Router) initPub(remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
 	var peer *webrtc.PeerConnection
 
-	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
+	if peer, err = this.wtAPI.NewPeerConnection(this.wtConfig); err != nil {
 		return nil, err
 	}
 
@@ -145,7 +145,7 @@ func (this *Router) Publish(remoteSession *webrtc.SessionDescription) (localSess
 func (this *Router) addSub(subscriber string, remoteSession *webrtc.SessionDescription) (localSession *webrtc.SessionDescription, err error) {
 	var peer *webrtc.PeerConnection
 
-	if peer, err = this.wtAPI.NewPeerConnection(*this.wtConfig); err != nil {
+	if peer, err = this.wtAPI.NewPeerConnection(this.wtConfig); err != nil {
 		return nil, err
 	}
 	peer.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {

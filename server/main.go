@@ -15,7 +15,7 @@ import (
 
 var api *webrtc.API
 
-var config = &webrtc.Configuration{
+var config = webrtc.Configuration{
 	ICEServers: []webrtc.ICEServer{
 		{
 			URLs: []string{"stun:222.73.105.251:3478"},
